@@ -1,32 +1,12 @@
 #include <Arduino.h>
-#include <SPI.h>
-#include <SD.h>
-#include <Ticker.h>
+#include "board.h"
+#include "3rdPartyLibs.h"
+#include "modemMgr.h"
+#include "gpsMgr.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
-// Set serial for debug console (to the Serial Monitor, default speed 115200)
-#define SerialMon Serial
-
-// Set serial for AT commands (to the module)
-// Use Hardware Serial on Mega, Leonardo, Micro
-#define SerialAT Serial1
-
-#define TINY_GSM_MODEM_SIM7070
-#define TINY_GSM_RX_BUFFER 1024 // Set RX buffer to 1Kb
-#define SerialAT Serial1
-
-// See all AT commands, if wanted
 #define DUMP_AT_COMMANDS
-
-// set GSM PIN, if any
-#define GSM_PIN ""
-
-// Your GPRS credentials, if any
-const char apn[]  = "YOUR-APN";     //SET TO YOUR APN
-const char gprsUser[] = "";
-const char gprsPass[] = "";
-
-#include <TinyGsmClient.h>
-
 #ifdef DUMP_AT_COMMANDS
 #include <StreamDebugger.h>
 StreamDebugger debugger(SerialAT, SerialMon);
@@ -35,128 +15,107 @@ TinyGsm modem(debugger);
 TinyGsm modem(SerialAT);
 #endif
 
-#define uS_TO_S_FACTOR      1000000ULL  // Conversion factor for micro seconds to seconds
-#define TIME_TO_SLEEP       60          // Time ESP32 will go to sleep (in seconds)
-
-#define UART_BAUD           9600
-#define PIN_DTR             25
-#define PIN_TX              27
-#define PIN_RX              26
-#define PWR_PIN             4
-
-#define SD_MISO             2
-#define SD_MOSI             15
-#define SD_SCLK             14
-#define SD_CS               13
-#define LED_PIN             12
-
-void enableGPS(void)
-{
-    // Set Modem GPS Power Control Pin to HIGH ,turn on GPS power
-    // Only in version 20200415 is there a function to control GPS power
-    modem.sendAT("+CGPIO=0,48,1,1");
-    if (modem.waitResponse(10000L) != 1) {
-        DBG("Set GPS Power HIGH Failed");
-    }
-    modem.enableGPS();
-}
-
-void disableGPS(void)
-{
-    // Set Modem GPS Power Control Pin to LOW ,turn off GPS power
-    // Only in version 20200415 is there a function to control GPS power
-    modem.sendAT("+CGPIO=0,48,1,0");
-    if (modem.waitResponse(10000L) != 1) {
-        DBG("Set GPS Power LOW Failed");
-    }
-    modem.disableGPS();
-}
-
-void modemPowerOn()
-{
-    pinMode(PWR_PIN, OUTPUT);
-    digitalWrite(PWR_PIN, HIGH);
-    delay(1000);    //Datasheet Ton mintues = 1S
-    digitalWrite(PWR_PIN, LOW);
-}
-
-void modemPowerOff()
-{
-    pinMode(PWR_PIN, OUTPUT);
-    digitalWrite(PWR_PIN, HIGH);
-    delay(1500);    //Datasheet Ton mintues = 1.2S
-    digitalWrite(PWR_PIN, LOW);
-}
+ModemMgr modemMgr(modem, SerialMon, SerialAT, MODEM_PWR_PIN, MODEM_PIN_DTR);
+GpsMgr gpsMgr(modem);
 
 
-void modemRestart()
-{
-    modemPowerOff();
-    delay(1000);
-    modemPowerOn();
-}
-
-void setup()
-{
-    // Set console baud rate
-    SerialMon.begin(115200);
-
-    delay(10);
-
-    // Set LED OFF
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, HIGH);
-
-    modemPowerOn();
-
-    SerialAT.begin(UART_BAUD, SERIAL_8N1, PIN_RX, PIN_TX);
-
-    Serial.println("/**********************************************************/");
-    Serial.println("To initialize the network test, please make sure your GPS");
-    Serial.println("antenna has been connected to the GPS port on the board.");
-    Serial.println("/**********************************************************/\n\n");
-
-    delay(10000);
-}
-
-void loop()
-{
-    if (!modem.testAT()) {
-        Serial.println("Failed to restart modem, attempting to continue without restarting");
-        modemRestart();
-        return;
-    }
-
-    Serial.println("Start positioning . Make sure to locate outdoors.");
-    Serial.println("The blue indicator light flashes to indicate positioning.");
-
-    enableGPS();
-
-    float lat,  lon;
+/*
+ * @brief Main FreeRTOS task for GPS acquisition and reporting.
+ * @paramin pvParameters Pointer to task parameters (unused).
+ */
+void gpsTask(void* pvParameters) {
+    float gps_lat = 0.0, gps_lon = 0.0;
+    bool gps_fix_acquired = false;
+    static GpsFixType gpsState = GPS_MODEM_TEST;
     while (1) {
-        if (modem.getGPS(&lat, &lon)) {
-            Serial.println("The location has been locked, the latitude and longitude are:");
-            Serial.print("latitude:"); Serial.println(lat);
-            Serial.print("longitude:"); Serial.println(lon);
+        switch (gpsState) {
+            case GPS_MODEM_IDLE:
+                /* If a fix was acquired, wait before reacquiring */
+                if(gps_fix_acquired) {
+                    SerialMon.println("Entering idle state, will reacquire GPS fix after interval");
+                    /* Wait for reacquire interval, then start new fix cycle */
+                    vTaskDelay(pdMS_TO_TICKS(5000));
+                    gps_fix_acquired = false;
+                    gpsState = GPS_MODEM_TEST;
+                } else {
+                    SerialMon.println("GPS fix not acquired, staying in idle state");
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
             break;
+            case GPS_MODEM_TEST:
+                /* Test modem communication before enabling GPS */
+                if (!modemMgr.test()) {
+                    SerialMon.println("Modem test failed: Restarting modem");
+                    modemMgr.restart();
+                } else {
+                    gpsState = GPS_MODEM_ENABLE;
+                }
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            break;
+            case GPS_MODEM_ENABLE:
+                /* Enable GPS hardware and start positioning */
+                gpsMgr.enable();
+                SerialMon.println("Start GPS positioning!");
+                gpsState = GPS_MODEM_GET_FIX;
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            break;
+            case GPS_MODEM_GET_FIX:
+                /* Check for GPS fix */
+                if (gpsMgr.getFix()) {
+                    SerialMon.println("GPS fix acquired!");
+                    gpsState = GPS_MODEM_FIX_ACQUIRED;
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                } else {
+                    SerialMon.println("Waiting for GPS fix...");
+                    TOGGLE_LED();
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                }
+            break;
+            case GPS_MODEM_FIX_ACQUIRED:
+                /* After reporting, disable GPS and go to idle for reacquire interval */
+                gpsMgr.getLatLon(&gps_lat, &gps_lon);
+                SerialMon.println("Latitude: " + String(gps_lat, 6) + ", Longitude: " + String(gps_lon, 6));
+                gps_fix_acquired = true;
+                gpsState = GPS_MODEM_DISABLE;
+                vTaskDelay(pdMS_TO_TICKS(100));
+            break;
+            case GPS_MODEM_DISABLE:
+                /* Disable GPS hardware to save power */
+                SerialMon.println("Disabling GPS...");
+                gpsMgr.disable();
+                gpsState = GPS_MODEM_IDLE;
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                break;
+            default:
+                gpsState = GPS_MODEM_TEST;
+                vTaskDelay(pdMS_TO_TICKS(100));
+                break;
         }
-        digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-        delay(2000);
     }
+}
 
-    disableGPS();
+/*
+ * @brief Arduino setup function. Initializes hardware and starts GPS task.
+ */
+void setup() {
+    SerialMon.begin(115200);
+    /* Configure hardware pins */
+    pinMode(USER_BLUE_LED_PIN, OUTPUT);
+    pinMode(MODEM_PWR_PIN, OUTPUT);
+    pinMode(MODEM_PIN_DTR, OUTPUT);
+    TURN_ON_LED();
+    /* Power on and wake modem */
+    modemMgr.powerOn();
+    modemMgr.awake(); /* Pull down DTR to ensure the modem is not in sleep state */
+    /* Initialize modem serial port */
+    SerialAT.begin(MODEM_UART_BAUD, SERIAL_8N1, MODEM_PIN_RX, MODEM_PIN_TX);
+    SerialMon.println("Initializing modem...");
+    /* Start GPS FreeRTOS task */
+    xTaskCreate(gpsTask, "GpsTask", 4096, NULL, 1, NULL);
+}
 
-    Serial.println("/**********************************************************/");
-    Serial.println("After the network test is complete, please enter the  ");
-    Serial.println("AT command in the serial terminal.");
-    Serial.println("/**********************************************************/\n\n");
-
-    while (1) {
-        while (SerialAT.available()) {
-            SerialMon.write(SerialAT.read());
-        }
-        while (SerialMon.available()) {
-            SerialAT.write(SerialMon.read());
-        }
-    }
+/*
+ * @brief Arduino main loop. Not used, as logic is handled by FreeRTOS tasks.
+ */
+void loop() {
 }
