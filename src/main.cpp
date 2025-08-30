@@ -6,7 +6,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#define DUMP_AT_COMMANDS
+//#define DUMP_AT_COMMANDS
 #ifdef DUMP_AT_COMMANDS
 #include <StreamDebugger.h>
 StreamDebugger debugger(SerialAT, SerialMon);
@@ -30,13 +30,12 @@ void gpsTask(void* pvParameters) {
     while (1) {
         switch (gpsState) {
             case GPS_MODEM_IDLE:
-                /* If a fix was acquired, wait before reacquiring */
+                /* If a fix was acquired, enable GPS before reporting last fix */
                 if(gps_fix_acquired) {
-                    SerialMon.println("Entering idle state, will reacquire GPS fix after interval");
+                    SerialMon.println("Entering idle state, will reacquire GPS position after interval");
                     /* Wait for reacquire interval, then start new fix cycle */
-                    vTaskDelay(pdMS_TO_TICKS(5000));
-                    gps_fix_acquired = false;
-                    gpsState = GPS_MODEM_TEST;
+                    vTaskDelay(pdMS_TO_TICKS(10000));
+                    gpsState = GPS_MODEM_ENABLE;
                 } else {
                     SerialMon.println("GPS fix not acquired, staying in idle state");
                     vTaskDelay(pdMS_TO_TICKS(100));
@@ -56,13 +55,20 @@ void gpsTask(void* pvParameters) {
                 /* Enable GPS hardware and start positioning */
                 gpsMgr.enable();
                 SerialMon.println("Start GPS positioning!");
-                gpsState = GPS_MODEM_GET_FIX;
+                if(gps_fix_acquired) {
+                    /* GPS fix already acquired, skipping to fix acquired state */
+                    gpsState = GPS_MODEM_FIX_ACQUIRED;
+                } else {
+                    /* GPS fix not acquired, requesting fix */
+                    gpsState = GPS_MODEM_GET_FIX;
+                }
                 vTaskDelay(pdMS_TO_TICKS(1000));
             break;
             case GPS_MODEM_GET_FIX:
                 /* Check for GPS fix */
                 if (gpsMgr.getFix()) {
                     SerialMon.println("GPS fix acquired!");
+                    gps_fix_acquired = true;
                     gpsState = GPS_MODEM_FIX_ACQUIRED;
                     vTaskDelay(pdMS_TO_TICKS(1000));
                 } else {
@@ -75,7 +81,6 @@ void gpsTask(void* pvParameters) {
                 /* After reporting, disable GPS and go to idle for reacquire interval */
                 gpsMgr.getLatLon(&gps_lat, &gps_lon);
                 SerialMon.println("Latitude: " + String(gps_lat, 6) + ", Longitude: " + String(gps_lon, 6));
-                gps_fix_acquired = true;
                 gpsState = GPS_MODEM_DISABLE;
                 vTaskDelay(pdMS_TO_TICKS(100));
             break;
@@ -88,6 +93,7 @@ void gpsTask(void* pvParameters) {
                 break;
             default:
                 gpsState = GPS_MODEM_TEST;
+                gps_fix_acquired = false;
                 vTaskDelay(pdMS_TO_TICKS(100));
                 break;
         }
@@ -109,7 +115,7 @@ void setup() {
     modemMgr.awake(); /* Pull down DTR to ensure the modem is not in sleep state */
     /* Initialize modem serial port */
     SerialAT.begin(MODEM_UART_BAUD, SERIAL_8N1, MODEM_PIN_RX, MODEM_PIN_TX);
-    SerialMon.println("Initializing modem...");
+    SerialMon.println("Modem initialized.");
     /* Start GPS FreeRTOS task */
     xTaskCreate(gpsTask, "GpsTask", 4096, NULL, 1, NULL);
 }

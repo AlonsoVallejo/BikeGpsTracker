@@ -18,6 +18,7 @@ void GpsMgr::enable() {
     }
     /* Enable GPS functionality */
     modem.enableGPS();
+    SerialMon.println("GPS enabled");
 }
 
 /*
@@ -31,6 +32,7 @@ void GpsMgr::disable() {
     }
     /* Disable GPS functionality */
     modem.disableGPS();
+    SerialMon.println("GPS disabled");
 }
 
 /*
@@ -40,6 +42,7 @@ void GpsMgr::disable() {
 bool GpsMgr::getFix() {
     /* Get raw GNSS string from modem */
     String gnssRaw = modem.getGPSraw();
+    SerialMon.println("Raw GNSS data: " + gnssRaw);
     int idx = gnssRaw.indexOf(":");
     String data = (idx < 0) ? gnssRaw : gnssRaw.substring(idx + 1);
     data.trim();
@@ -60,12 +63,13 @@ bool GpsMgr::getFix() {
 
 /*
  * @brief Extract latitude and longitude from GNSS raw string.
- * @paramout lat Pointer to float to store latitude.
- * @paramout lon Pointer to float to store longitude.
+ * @param out lat Pointer to float to store latitude.
+ * @param out lon Pointer to float to store longitude.
  */
 void GpsMgr::getLatLon(float* lat, float* lon) {
     /* Get raw GNSS string from modem */
     String gnssRaw = modem.getGPSraw();
+    SerialMon.println("Raw GNSS data: " + gnssRaw);
     int idx = gnssRaw.indexOf(":");
     String data = (idx < 0) ? gnssRaw : gnssRaw.substring(idx + 1);
     int fieldCount = 0;

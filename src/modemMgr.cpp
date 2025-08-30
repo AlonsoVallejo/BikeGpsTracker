@@ -18,6 +18,7 @@ ModemMgr::ModemMgr(TinyGsm& modem, HardwareSerial& serialMon, HardwareSerial& se
  */
 void ModemMgr::powerOn() {
     /* Ensure pin is LOW before starting power sequence */
+    serialMon.println("Powering on modem...");
     digitalWrite(pwrPin, LOW);
     vTaskDelay(pdMS_TO_TICKS(100));
     digitalWrite(pwrPin, HIGH);
@@ -30,6 +31,7 @@ void ModemMgr::powerOn() {
  */
 void ModemMgr::powerOff() {
     /* Pull HIGH for required time to power off modem */
+    serialMon.println("Powering off modem...");
     digitalWrite(pwrPin, HIGH);
     vTaskDelay(pdMS_TO_TICKS(1500));
     digitalWrite(pwrPin, LOW);
