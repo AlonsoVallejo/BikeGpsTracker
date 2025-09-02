@@ -14,6 +14,17 @@ ModemMgr::ModemMgr(TinyGsm& modem, HardwareSerial& serialMon, HardwareSerial& se
     : modem(modem), serialMon(serialMon), serialAT(serialAT), pwrPin(pwrPin), dtrPin(dtrPin) {}
 
 /*
+ * @brief Initialize the modem manager.
+ */
+void ModemMgr::init() {
+    pinMode(pwrPin, OUTPUT);
+    pinMode(dtrPin, OUTPUT);
+    digitalWrite(pwrPin, LOW);
+    digitalWrite(dtrPin, LOW);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+
+/*
  * @brief Power on the modem by toggling the power pin sequence.
  */
 void ModemMgr::powerOn() {

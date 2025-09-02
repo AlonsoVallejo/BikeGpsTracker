@@ -1,39 +1,26 @@
-#include <Arduino.h>
-#include "board.h"
-#include "3rdPartyLibs.h"
-#include "modemMgr.h"
-#include "gpsMgr.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <Arduino.h>
+#include "system.h"
+#include <TinyGsmClient.h>
 
-//#define DUMP_AT_COMMANDS
-#ifdef DUMP_AT_COMMANDS
-#include <StreamDebugger.h>
-StreamDebugger debugger(SerialAT, SerialMon);
-TinyGsm modem(debugger);
-#else
-TinyGsm modem(SerialAT);
-#endif
-
-ModemMgr modemMgr(modem, SerialMon, SerialAT, MODEM_PWR_PIN, MODEM_PIN_DTR);
-GpsMgr gpsMgr(modem);
-
+/* Create modem and GPS manager instances */
+TinyGsm TinyModem(SerialAT);
 
 /*
  * @brief Main FreeRTOS task for GPS acquisition and reporting.
  * @paramin pvParameters Pointer to task parameters (unused).
  */
 void gpsTask(void* pvParameters) {
+    sysAppData_t* appData = (sysAppData_t*)pvParameters;
     float gps_lat = 0.0, gps_lon = 0.0;
     bool gps_fix_acquired = false;
     static GpsFixType gpsState = GPS_MODEM_TEST;
     while (1) {
         switch (gpsState) {
             case GPS_MODEM_IDLE:
-                /* If a fix was acquired, enable GPS before reporting last fix */
                 if(gps_fix_acquired) {
                     SerialMon.println("Entering idle state, will reacquire GPS position after interval");
-                    /* Wait for reacquire interval, then start new fix cycle */
                     vTaskDelay(pdMS_TO_TICKS(10000));
                     gpsState = GPS_MODEM_ENABLE;
                 } else {
@@ -42,31 +29,26 @@ void gpsTask(void* pvParameters) {
                 }
             break;
             case GPS_MODEM_TEST:
-                /* Test modem communication before enabling GPS */
-                if (!modemMgr.test()) {
+                if (!appData->modemMgr->test()) {
                     SerialMon.println("Modem test failed: Restarting modem");
-                    modemMgr.restart();
+                    appData->modemMgr->restart();
                 } else {
                     gpsState = GPS_MODEM_ENABLE;
                 }
                 vTaskDelay(pdMS_TO_TICKS(1000));
             break;
             case GPS_MODEM_ENABLE:
-                /* Enable GPS hardware and start positioning */
-                gpsMgr.enable();
+                appData->gpsMgr->enable();
                 SerialMon.println("Start GPS positioning!");
                 if(gps_fix_acquired) {
-                    /* GPS fix already acquired, skipping to fix acquired state */
                     gpsState = GPS_MODEM_FIX_ACQUIRED;
                 } else {
-                    /* GPS fix not acquired, requesting fix */
                     gpsState = GPS_MODEM_GET_FIX;
                 }
                 vTaskDelay(pdMS_TO_TICKS(1000));
             break;
             case GPS_MODEM_GET_FIX:
-                /* Check for GPS fix */
-                if (gpsMgr.getFix()) {
+                if (appData->gpsMgr->getFix()) {
                     SerialMon.println("GPS fix acquired!");
                     gps_fix_acquired = true;
                     gpsState = GPS_MODEM_FIX_ACQUIRED;
@@ -78,16 +60,14 @@ void gpsTask(void* pvParameters) {
                 }
             break;
             case GPS_MODEM_FIX_ACQUIRED:
-                /* After reporting, disable GPS and go to idle for reacquire interval */
-                gpsMgr.getLatLon(&gps_lat, &gps_lon);
-                SerialMon.println("Latitude: " + String(gps_lat, 6) + ", Longitude: " + String(gps_lon, 6));
+                appData->gpsMgr->getLatLon(&appData->gpsData->latitude, &appData->gpsData->longitude);
+                SerialMon.println("Latitude: " + String(appData->gpsData->latitude, 6) + ", Longitude: " + String(appData->gpsData->longitude, 6));
                 gpsState = GPS_MODEM_DISABLE;
                 vTaskDelay(pdMS_TO_TICKS(100));
             break;
             case GPS_MODEM_DISABLE:
-                /* Disable GPS hardware to save power */
                 SerialMon.println("Disabling GPS...");
-                gpsMgr.disable();
+                appData->gpsMgr->disable();
                 gpsState = GPS_MODEM_IDLE;
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 break;
@@ -100,24 +80,56 @@ void gpsTask(void* pvParameters) {
     }
 }
 
+void cellularTask(void* pvParameters) {
+    sysAppData_t* appData = (sysAppData_t*)pvParameters;
+    for (;;) {
+        // Cellular task logic here
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 /*
  * @brief Arduino setup function. Initializes hardware and starts GPS task.
  */
 void setup() {
     SerialMon.begin(115200);
-    /* Configure hardware pins */
-    pinMode(USER_BLUE_LED_PIN, OUTPUT);
-    pinMode(MODEM_PWR_PIN, OUTPUT);
-    pinMode(MODEM_PIN_DTR, OUTPUT);
-    TURN_ON_LED();
-    /* Power on and wake modem */
-    modemMgr.powerOn();
-    modemMgr.awake(); /* Pull down DTR to ensure the modem is not in sleep state */
-    /* Initialize modem serial port */
     SerialAT.begin(MODEM_UART_BAUD, SERIAL_8N1, MODEM_PIN_RX, MODEM_PIN_TX);
+
+    pinMode(USER_BLUE_LED_PIN, OUTPUT);
+    TURN_ON_LED();
+
+    static sysGpsData_t sysGpsData = {
+        0.0, 
+        0.0, 
+        false, 
+        GPS_MODEM_IDLE
+    };
+
+    static sysCellData_t sysCellData = {
+        "+523121084676",
+        "Bike GPS Tracker position:", 
+        "", 
+        ""
+    };
+
+    /* Create modem and GPS manager instances */
+    static ModemMgr sim7070g(TinyModem, SerialMon, SerialAT, MODEM_PWR_PIN, MODEM_PIN_DTR);
+    static GpsMgr gps7070g(TinyModem, SerialMon, SerialAT, MODEM_PWR_PIN, MODEM_PIN_DTR);
+
+    sim7070g.init();
+    sim7070g.powerOn();
+    sim7070g.awake(); 
     SerialMon.println("Modem initialized.");
-    /* Start GPS FreeRTOS task */
-    xTaskCreate(gpsTask, "GpsTask", 4096, NULL, 1, NULL);
+
+    static sysAppData_t sysAppData = {
+        &sim7070g,
+        &gps7070g,
+        &sysGpsData,
+        &sysCellData
+    };
+
+    xTaskCreatePinnedToCore(gpsTask, "GpsTask", 4096, &sysAppData, 1, NULL, 1);
+    xTaskCreatePinnedToCore(cellularTask, "CellularTask", 4096, &sysAppData, 1, NULL, 1);
 }
 
 /*
