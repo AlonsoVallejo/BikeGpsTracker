@@ -38,7 +38,7 @@ void gpsTask(void* pvParameters) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
             break;
             case GPS_MODEM_ENABLE:
-                appData->gpsMgr->enable();
+                appData->modemMgr->GpsEnable();
                 SerialMon.println("Start GPS positioning!");
                 if(gps_fix_acquired) {
                     gpsState = GPS_MODEM_FIX_ACQUIRED;
@@ -48,7 +48,7 @@ void gpsTask(void* pvParameters) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
             break;
             case GPS_MODEM_GET_FIX:
-                if (appData->gpsMgr->getFix()) {
+                if (appData->modemMgr->GpsGetFix()) {
                     SerialMon.println("GPS fix acquired!");
                     gps_fix_acquired = true;
                     gpsState = GPS_MODEM_FIX_ACQUIRED;
@@ -60,14 +60,14 @@ void gpsTask(void* pvParameters) {
                 }
             break;
             case GPS_MODEM_FIX_ACQUIRED:
-                appData->gpsMgr->getLatLon(&appData->gpsData->latitude, &appData->gpsData->longitude);
+                appData->modemMgr->GpsGetLatLon(&appData->gpsData->latitude, &appData->gpsData->longitude);
                 SerialMon.println("Latitude: " + String(appData->gpsData->latitude, 6) + ", Longitude: " + String(appData->gpsData->longitude, 6));
                 gpsState = GPS_MODEM_DISABLE;
                 vTaskDelay(pdMS_TO_TICKS(100));
             break;
             case GPS_MODEM_DISABLE:
                 SerialMon.println("Disabling GPS...");
-                appData->gpsMgr->disable();
+                appData->modemMgr->GpsDisable();
                 gpsState = GPS_MODEM_IDLE;
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 break;
@@ -112,9 +112,8 @@ void setup() {
         ""
     };
 
-    /* Create modem and GPS manager instances */
+    /* Create SIM7070G manager instances */
     static ModemMgr sim7070g(TinyModem, SerialMon, SerialAT, MODEM_PWR_PIN, MODEM_PIN_DTR);
-    static GpsMgr gps7070g(TinyModem, SerialMon, SerialAT, MODEM_PWR_PIN, MODEM_PIN_DTR);
 
     sim7070g.init();
     sim7070g.powerOn();
@@ -123,7 +122,6 @@ void setup() {
 
     static sysAppData_t sysAppData = {
         &sim7070g,
-        &gps7070g,
         &sysGpsData,
         &sysCellData
     };
