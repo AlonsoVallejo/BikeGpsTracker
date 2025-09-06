@@ -19,6 +19,17 @@ struct sysGpsData_t {
 /* SMS text sent to target phone number: "GPS_MAP_URL" + "," + "latitude","longitude" */
 /* i.e.: "http://www.google.com/maps/place/20.558853,-103.428903" */
 #define GPS_MAP_URL "http://www.google.com/maps/place/"
+#define SMS_REQ_LOCATION "LOCATION"
+
+/* freeRTOS tasks priorities and stack sizes */
+#define GPS_TASK_STACK_SIZE  (4096)
+#define SMS_TASK_STACK_SIZE  (4096)
+
+#define GPS_TASK_PRIORITY    (2)
+#define SMS_TASK_PRIORITY    (1)
+
+#define TASK_CORE_0 (0)
+#define TASK_CORE_1 (1)
 
 struct sysCellData_t {
     String target_number;

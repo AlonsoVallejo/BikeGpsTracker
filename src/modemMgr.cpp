@@ -162,3 +162,147 @@ void ModemMgr::GpsGetLatLon(float* lat, float* lon) {
     *lon = longitude;
 }
 
+/*
+ * @brief Check if SIM card is ready.
+ * @return true if SIM is ready, false otherwise.
+ */
+bool ModemMgr::isSimReady() {
+    modem.sendAT("+CPIN?");
+    if (modem.waitResponse(10000L) != 1) {
+        serialMon.println("SIM not ready");
+        return false;
+    }
+    serialMon.println("SIM is ready");
+    return true;
+}
+
+String ModemMgr::simGetSignalQuality() {
+    modem.sendAT("+CSQ");
+    if (modem.waitResponse(10000L) != 1) {
+        serialMon.println("Failed to get signal quality");
+        return "99"; // 99 means unknown or not detectable
+    }
+    // Custom parsing logic
+    char buf[7];
+    size_t bytesRead = modem.stream.readBytesUntil(',', buf, 7);
+    int16_t rssi = 99;
+    if (bytesRead && bytesRead < 7) {
+        buf[bytesRead] = '\0';
+        rssi = atoi(buf);
+    }
+    modem.waitResponse();
+    serialMon.println("Signal quality (RSSI): " + String(rssi));
+    return String(rssi);
+}
+
+/*
+ * @brief Set the SIM card network mode.
+ * @paramin mode Network mode (0=auto, 1=2G only, 2=3G only, 3=4G only).
+ */
+bool ModemMgr::simSetNetworkMode(int mode) {
+    String cmd = "+CNMP=" + String(mode);
+    modem.sendAT(cmd);
+    if (modem.waitResponse(10000L) != 1) {
+        serialMon.println("Failed to set network mode");
+        return false;
+    }
+    serialMon.println("Network mode set to " + String(mode));
+    return true;
+}
+
+/*
+ * @brief Get the SIM card registration status.
+ * @return Registration status code (0-5).
+ */
+RegStatus ModemMgr::simGetRegistrationStatus() {
+    modem.sendAT("+CREG?");
+    if (modem.waitResponse(10000L) != 1) {
+        serialMon.println("Failed to get registration status");
+        return REG_NO_RESULT;
+    }
+    String response = "";
+    unsigned long start = millis();
+    while ((millis() - start) < 500 && serialAT.available()) {
+        response += (char)serialAT.read();
+    }
+    // Example response: "+CREG: 0,1"
+    int cregIdx = response.indexOf("+CREG:");
+    if (cregIdx < 0) {
+        serialMon.println("Unexpected CREG response: " + response);
+        return REG_NO_RESULT;
+    }
+    int commaIdx = response.indexOf(",", cregIdx);
+    if (commaIdx < 0) {
+        serialMon.println("Malformed CREG response: " + response);
+        return REG_NO_RESULT;
+    }
+    String statusStr = response.substring(commaIdx + 1);
+    statusStr.trim();
+    int status = statusStr.toInt();
+    serialMon.println("Registration status: " + String(status));
+    return static_cast<RegStatus>(status);
+}
+
+/*
+ * @brief Read the latest SMS message from the SIM card.
+ * @return The content of the latest SMS message, or empty string if none.
+ */
+String ModemMgr::simReadMessage() {
+    modem.sendAT("+CMGR=1");
+    if (modem.waitResponse(10000L) != 1) {
+        serialMon.println("Failed to read SMS");
+        return "";
+    }
+    String response = "";
+    unsigned long start = millis();
+    while ((millis() - start) < 1000) {
+        while (serialAT.available()) {
+            response += (char)serialAT.read();
+        }
+    }
+    // Parse SMS text from response
+    int textStart = response.indexOf("\n", response.indexOf("+CMGR:"));
+    if (textStart < 0) {
+        serialMon.println("SMS parse error: " + response);
+        return "";
+    }
+    String smsText = response.substring(textStart + 1);
+    smsText.trim();
+    int textEnd = smsText.indexOf("\n");
+    if (textEnd > 0) {
+        smsText = smsText.substring(0, textEnd);
+    }
+    serialMon.println("SMS content: " + smsText);
+    return smsText;
+}
+
+/*
+ * @brief Send an SMS message via the SIM card.
+ * @paramin number Recipient phone number.
+ * @paramin message Message content.
+ */
+void ModemMgr::simSendMessage(const String& number, const String& message) {
+    String cmd = "+CMGS=\"" + number + "\"";
+    modem.sendAT(cmd);
+    if (modem.waitResponse(10000L) != 1) {
+        serialMon.println("Failed to send SMS");
+        return;
+    }
+    modem.sendAT(message);
+    modem.sendAT("\x1A"); // Send Ctrl+Z to indicate end of message
+    if (modem.waitResponse(10000L) != 1) {
+        serialMon.println("Failed to send SMS");
+    } else {
+        serialMon.println("SMS sent successfully");
+    }
+}
+
+/**
+ * @brief Get the current network operator.
+ * @return The name of the network operator.
+ */
+String ModemMgr::simGetOperator() {
+    String op = modem.getOperator();
+    serialMon.println("Network operator: " + op);
+    return op;
+}

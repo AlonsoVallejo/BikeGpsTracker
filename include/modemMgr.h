@@ -31,7 +31,15 @@ public:
     bool GpsGetFix();
     void GpsGetLatLon(float* lat, float* lon);
 
-    /* SIM7070G cellular functions */
+    /* SIM7070G SIM card functions */
+    bool isSimReady();
+    String simGetSignalQuality();
+    bool simSetNetworkMode(int mode);
+    RegStatus simGetRegistrationStatus();
+    String simReadMessage();
+    void simSendMessage(const String& number, const String& message);
+    String simGetOperator();
+
 protected:
     TinyGsm& modem;
     HardwareSerial& serialMon;
